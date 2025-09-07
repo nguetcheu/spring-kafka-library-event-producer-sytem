@@ -30,6 +30,7 @@ public class LibraryEventsProducer {
         var key = libraryEvent.LibraryEventId();
         var value = objectMapper.writeValueAsString(libraryEvent);
 
+        // blocking call - get metadata about the kafka cluster
         var completableFuture = kafkaTemplate.send(topic, key, value);
 
         completableFuture
