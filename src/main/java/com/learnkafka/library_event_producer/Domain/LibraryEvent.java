@@ -1,7 +1,7 @@
 package com.learnkafka.library_event_producer.Domain;
 
 public record LibraryEvent(
-        Integer LibraryEvent,
+        Integer LibraryEventId,
         LibraryEventType libraryEventType,
         Book book
 ) {
