@@ -4,10 +4,16 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.learnkafka.library_event_producer.Domain.LibraryEvent;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Component;
+
+import java.time.Duration;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 @Component
 @Slf4j
@@ -30,7 +36,46 @@ public class LibraryEventsProducer {
         var key = libraryEvent.LibraryEventId();
         var value = objectMapper.writeValueAsString(libraryEvent);
 
-        // blocking call - get metadata about the kafka cluster
+        //1-  blocking call - get metadata about the kafka cluster
+        //2- send message happens - returns a CompletetableFuture
+        var completableFuture = kafkaTemplate.send(topic, key, value);
+
+        completableFuture
+                .whenComplete((sendResult, throwable) -> {
+                    if (throwable != null) {
+                        handleFailure(key, value, throwable);
+                    } else {
+                        handleSuccess(key, value, sendResult);
+                    }
+                });
+    }
+
+    public SendResult<Integer, String> sendLibraryEvent_approach2(LibraryEvent libraryEvent)
+            throws JsonProcessingException, ExecutionException, InterruptedException, TimeoutException {
+
+        var key = libraryEvent.LibraryEventId();
+        var value = objectMapper.writeValueAsString(libraryEvent);
+
+        //1-  blocking call - get metadata about the kafka cluster
+        //2- Block and wait until the message is sent to the kafka
+        var sendResult = kafkaTemplate.send(topic, key, value).get(3, TimeUnit.SECONDS);
+        handleSuccess(key,value, sendResult);
+        return sendResult;
+    }
+
+    private ProducerRecord<Integer, String> buildProducerRecord(Integer key, String value){
+
+        return new ProducerRecord<>(topic, key, value);
+    }
+
+    public void sendLibraryEvent_approach3(LibraryEvent libraryEvent) throws JsonProcessingException {
+
+        var key = libraryEvent.LibraryEventId();
+        var value = objectMapper.writeValueAsString(libraryEvent);
+
+        var producerRecord = buildProducerRecord(key, value);
+        //1-  blocking call - get metadata about the kafka cluster
+        //2- send message happens - returns a CompletetableFuture
         var completableFuture = kafkaTemplate.send(topic, key, value);
 
         completableFuture
