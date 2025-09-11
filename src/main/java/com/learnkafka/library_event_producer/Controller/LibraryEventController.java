@@ -30,9 +30,9 @@ public class LibraryEventController {
 
         // invoke the kafka producer
 
-        libraryEventsProducer.sendLibraryEvent_approach3(libraryEvent);
+        // libraryEventsProducer.sendLibraryEvent_approach3(libraryEvent);
 
-        // libraryEventsProducer.sendLibraryEvent_approach2(libraryEvent);
+        libraryEventsProducer.sendLibraryEvent_approach2(libraryEvent);
 
         // libraryEventsProducer.sendLibraryEvent(libraryEvent);
 
