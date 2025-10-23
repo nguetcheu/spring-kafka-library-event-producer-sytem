@@ -27,64 +27,102 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+/**
+ * Test d’intégration du contrôleur LibraryEventController.
+ *
+ * Ce test vérifie le bon fonctionnement du flux complet :
+ * Requête HTTP POST → Contrôleur → Producteur Kafka → Kafka embarqué → Vérification du message consommé.
+ */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @EmbeddedKafka(topics = "library-events")
-@TestPropertySource(properties = {"spring.kafka.producer.bootstrap-servers=${spring.embedded.kafka.brokers}",
-        "spring.kafka.admin.properties.bootstrap.servers=${spring.embedded.kafka.brokers}"})
+@TestPropertySource(properties = {
+        // On remplace les serveurs Kafka par le broker embarqué pour isoler le test
+        "spring.kafka.producer.bootstrap-servers=${spring.embedded.kafka.brokers}",
+        "spring.kafka.admin.properties.bootstrap.servers=${spring.embedded.kafka.brokers}"
+})
 class LibraryEventControllerIT {
 
     @Autowired
-    TestRestTemplate restTemplate;
-
-    // Configure the embeddedKafkaBroker,
-    // override the kafka producer bootstrap address to the embedded broker ones
-    @Autowired
-    EmbeddedKafkaBroker embeddedKafkaBroker;
+    TestRestTemplate restTemplate; // Permet d’appeler l’API REST comme un vrai client HTTP
 
     @Autowired
-    ObjectMapper objectMapper;
+    EmbeddedKafkaBroker embeddedKafkaBroker; // Kafka embarqué en mémoire pour le test
 
-    private Consumer<Integer, String> consumer;
+    @Autowired
+    ObjectMapper objectMapper; // Pour convertir objets ↔ JSON
 
+    private Consumer<Integer, String> consumer; // Consommateur Kafka utilisé pour vérifier le message produit
+
+    /**
+     * Avant chaque test :
+     * - Configuration du consommateur Kafka pour écouter le broker embarqué
+     * - Abonnement à tous les topics
+     */
     @BeforeEach
     void setUp() {
+        // Création de la configuration de base du consumer Kafka
         Map<String, Object> configs = new HashMap<>(KafkaTestUtils.consumerProps("group1", "true", embeddedKafkaBroker));
+
+        // Lecture à partir des derniers messages (et non depuis le début du topic)
         configs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
-        consumer = new DefaultKafkaConsumerFactory<>(configs, new IntegerDeserializer(), new StringDeserializer()).createConsumer();
+
+        // Création du consumer Kafka avec désérialisation clé=Integer et valeur=String (JSON)
+        consumer = new DefaultKafkaConsumerFactory<>(configs, new IntegerDeserializer(), new StringDeserializer())
+                .createConsumer();
+
+        // Le consumer s’abonne à tous les topics du broker embarqué (ici : library-events)
         embeddedKafkaBroker.consumeFromAllEmbeddedTopics(consumer);
     }
 
+    /**
+     * Après chaque test : fermeture propre du consumer
+     */
     @AfterEach
     void tearDown() {
         consumer.close();
     }
 
-    // Configure a kafka consumer in the test case
-    // Wire KafkaConsumer and EmbeddedKafkaBroker
-    // Consume the record from the EmbeddedKafkaBroker and the assert on it
-
+    /**
+     * Test principal : vérifie que l’API POST /v1/libraryevent
+     * - retourne un statut HTTP 201 (Created)
+     * - publie bien un message dans Kafka
+     * - et que ce message correspond exactement à celui envoyé
+     */
     @Test
     void postLibraryEvent() throws JsonProcessingException {
-        // given
-        LibraryEvent libraryEvent = TestUtil.libraryEventRecord();
+        // --- Préparation des données ---
+        LibraryEvent libraryEvent = TestUtil.libraryEventRecord(); // Crée un objet LibraryEvent de test
         System.out.println("libraryEvent : " + objectMapper.writeValueAsString(libraryEvent));
+
+        // Définition des headers HTTP (type JSON)
         HttpHeaders headers = new HttpHeaders();
         headers.set("content-type", MediaType.APPLICATION_JSON.toString());
+
+        // Création de l’entité HTTP avec corps et en-têtes
         var httpEntity = new HttpEntity<>(TestUtil.libraryEventRecord(), headers);
 
-        // when
-        var responseEntity = restTemplate
-                .exchange("/v1/libraryevent", HttpMethod.POST, httpEntity,LibraryEvent.class);
+        // --- Exécution de la requête ---
+        var responseEntity = restTemplate.exchange(
+                "/v1/libraryevent",
+                HttpMethod.POST,
+                httpEntity,
+                LibraryEvent.class
+        );
 
-        // then
-        assertEquals(HttpStatus.CREATED, responseEntity.getStatusCode());
+        // --- Vérifications HTTP ---
+        assertEquals(HttpStatus.CREATED, responseEntity.getStatusCode(), "Le code HTTP doit être 201 Created");
 
+        // --- Vérifications côté Kafka ---
+        // Récupération des messages publiés dans le topic
         ConsumerRecords<Integer, String> consumerRecords = KafkaTestUtils.getRecords(consumer);
-        //Thread.sleep(3000);
+
+        // Vérifie qu’un seul message a été produit
         assert consumerRecords.count() == 1;
+
+        // Pour chaque message consommé, on le désérialise et on compare son contenu
         consumerRecords.forEach(record -> {
             var libraryEventActual = TestUtil.parseLibraryEventRecord(objectMapper, record.value());
-            assertEquals(libraryEvent, libraryEventActual);
+            assertEquals(libraryEvent, libraryEventActual, "Le message Kafka doit correspondre à l’événement envoyé");
         });
     }
 
